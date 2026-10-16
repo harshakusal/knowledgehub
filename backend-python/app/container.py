@@ -3,12 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from psycopg_pool import AsyncConnectionPool
-
 from app.clients.llm_client import LlmClient
 from app.config import Settings
-from app.repositories.chunk_repository import ChunkRepository
-from app.repositories.document_repository import DocumentRepository
 from app.repositories.job_repository import JobRepository
 from app.services.chat_stream_service import ChatStreamService
 from app.services.chunking_service import ChunkingService
@@ -36,10 +32,10 @@ class Container:
     streams: StreamLimiter
 
 
-def build(settings: Settings, pool: AsyncConnectionPool) -> Container:
+def build(settings: Settings, doc_repo, chunk_repo) -> Container:
+    """doc_repo/chunk_repo: Postgres or in-memory implementations (same interface)."""
     llm = LlmClient(settings.llm)
     queue = BoundedTaskQueue(settings.workers, settings.queue_capacity)
-    doc_repo, chunk_repo = DocumentRepository(pool), ChunkRepository(pool)
     permissions = DocumentPermissionService(doc_repo)
     prompts = PromptBuilder()
     ingestion = IngestionService(doc_repo, chunk_repo, ChunkingService(settings.chunk_size, settings.chunk_overlap), llm)

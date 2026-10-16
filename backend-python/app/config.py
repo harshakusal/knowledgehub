@@ -29,8 +29,10 @@ class LlmSettings:
 
 @dataclass(frozen=True)
 class Settings:
-    database_url: str = field(default_factory=lambda: _env(
-        "DATABASE_URL", "postgresql://kh:kh@localhost:5432/knowledgehub_py"), repr=False)
+    database_url: str = field(default_factory=lambda: _env("DATABASE_URL", ""), repr=False)
+    # STORAGE=memory|postgres. Default: postgres if DATABASE_URL is set, otherwise memory (no database needed).
+    storage: str = field(default_factory=lambda: _env(
+        "STORAGE", "postgres" if os.environ.get("DATABASE_URL") else "memory").strip().lower())
     workers: int = field(default_factory=lambda: int(_env("LLM_WORKERS", "4")))
     queue_capacity: int = field(default_factory=lambda: int(_env("LLM_QUEUE_CAPACITY", "100")))
     max_concurrent_streams: int = field(default_factory=lambda: int(_env("MAX_CONCURRENT_STREAMS", "16")))
@@ -39,3 +41,9 @@ class Settings:
     chunk_overlap: int = 50
     max_upload_bytes: int = field(default_factory=lambda: int(_env("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024))))
     llm: LlmSettings = field(default_factory=LlmSettings)
+
+    def __post_init__(self):
+        if self.storage not in ("memory", "postgres"):
+            raise ValueError("STORAGE must be 'memory' or 'postgres'")
+        if self.storage == "postgres" and not self.database_url:
+            raise ValueError("STORAGE=postgres requires DATABASE_URL")
