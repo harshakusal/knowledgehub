@@ -52,3 +52,17 @@ Checked: only allow-listed files; characterization tests unchanged in assertions
 | Per-row permission filter in `list()` | Rejected | N+1 queries; owner predicate in SQL is both faster and safer. |
 | Catch-all `try/catch (Exception)` returning `null` in `requireReadable` | Rejected | Hides failures and turns them into NPEs later. |
 | "While I'm here" reformatting of `ChunkingService` | Rejected | Not in allow-list. |
+
+## Python port of the same refactor (`backend-python/app/services/`)
+Same workflow, Python allow-list: `legacy_document_service.py`, `document_permission_service.py` (new),
+`tests/test_services.py`. Plan prompt asked for the call-site list first; characterization tests
+(`test_upload_*`, `test_list_scoped_and_get_delete_foreign_are_404`) were written against in-memory fakes
+(`tests/fakes.py`) and kept unchanged across the extraction; `pytest` green before and after.
+
+Rejected Python-specific suggestions:
+| Suggestion | Reason |
+|---|---|
+| Make `require_readable` a FastAPI dependency (`Depends(load_owned_document)`) | Couples authorization to HTTP; services (RAG, summary worker) need the same check off-request. |
+| Use `BackgroundTasks` for summaries | Unbounded, no back-pressure or concurrency cap against a rate-limited LLM (see README). |
+| `pybreaker` for the circuit breaker | Its listeners/state are sync-oriented and it counts every exception; we need to record only retryable errors and ignore cancellations — a 60-line breaker is clearer and fully tested. |
+| SQLAlchemy ORM models returned from routers | Re-introduces entity exposure; raw SQL + Pydantic DTOs keep the contract explicit. |

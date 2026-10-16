@@ -51,3 +51,18 @@ Tests: `DocumentControllerTest` (401 without header, DTO-only JSON, 404 not 500,
 - `ChatPanel`: `fetch` + `body.getReader()` + `TextDecoder({stream:true})` + incremental parser (`lib/sse.js`, tested
   with char-by-char chunking); Stop = `AbortController.abort()`; states idle/streaming/done/stopped/error; input disabled
   while streaming; abort on unmount.
+
+## Python backend notes (`backend-python/`)
+The same findings apply to an equivalent FastAPI port of the original controller; the Python rewrite fixes them as follows:
+- **IDOR / findAll / delete** → `DocumentPermissionService.require_readable` (404 for foreign), owner-scoped SQL only, `DELETE` → 204.
+- **Prompt injection** → `prompt_builder.py` (system-only rules, `<<<DOCUMENT>>>` fences, delimiter neutralisation); no `style` param.
+- **Blocking LLM call** → async httpx (never blocks the event loop) + `202` job on a bounded `BoundedTaskQueue`.
+  A sync `requests` call inside an `async def` route would freeze *every* request on that worker — the Python version of #5.
+- **`Optional.get()` 500** → `None` checks raise `NotFound`; exception handlers return problem+json.
+- **Entity exposure / validation** → Pydantic DTOs (`schemas.py`) are the only response types; `ChatRequest` validates
+  blank/length/max 20 ids; `UUID` path params → 400 on malformed ids; upload size/type/UTF-8 checks.
+- **Field injection** analogue (module-level globals) → composition root `container.py` + `Depends`.
+- Extra Python-specific pitfall fixed: contextvars set in a *sync* dependency are lost (it runs in a threadpool), so
+  `current_user_id` is `async`; background jobs get an explicit `copy_context()` snapshot.
+Tests: `tests/test_routers.py` (401, DTO JSON, 404/400/201/204/202/503, SSE contract), `tests/test_services.py`,
+`tests/test_llm_client.py` (respx).

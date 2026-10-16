@@ -5,12 +5,30 @@ LLM grounded **only** in the asking user's own documents (RAG over pgvector) and
 with a working **Stop** button. A rate-limited or slow LLM never freezes the app.
 
 ```
-browser (React/Vite) ──/api──▶ Spring Boot 3 (Java 21) ──▶ PostgreSQL 16 + pgvector (Flyway)
+browser (React/Vite) ──/api──▶ Spring Boot 3 (Java 21) | FastAPI (Python) ──▶ PostgreSQL + pgvector
         ▲  SSE tokens              │ llmExecutor (bounded pool)
         └──────────────────────────┤ LlmClient: retry(429/503/timeouts) + circuit breaker
                                    ▼
                               mock-llm (Node): /v1/embeddings, /v1/chat (SSE), random 429/503
 ```
+
+## Quick start without Docker (Python backend) — verified
+Prereqs: PostgreSQL 16/17 + pgvector (Debian/Ubuntu: `sudo apt install postgresql-17 postgresql-17-pgvector`),
+Node 20+, Python 3.11+.
+```bash
+./run-local.sh                     # creates DB knowledgehub_py + extension, starts mock-llm :4000,
+                                   # FastAPI :8000 (migrations applied on boot), Vite :5173 proxied to :8000
+# or by hand, in four terminals:
+sudo service postgresql start
+sudo -u postgres psql -c "create user kh with password 'kh'" -c "create database knowledgehub_py owner kh"
+sudo -u postgres psql -d knowledgehub_py -c "create extension vector"
+cd mock-llm && node server.js
+cd backend-python && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt \
+   && DATABASE_URL=postgresql://kh:kh@localhost:5432/knowledgehub_py .venv/bin/uvicorn app.main:app --port 8000
+cd frontend && npm ci && BACKEND_URL=http://localhost:8000 npm run dev      # http://localhost:5173
+```
+Tests: `cd backend-python && .venv/bin/pytest` · `cd frontend && npm test` · `cd mock-llm && npm test`.
+The frontend is unchanged: both backends expose the identical API; only `BACKEND_URL` (proxy target) differs.
 
 ## Quick start (Docker)
 ```bash
@@ -25,7 +43,7 @@ cd frontend && npm ci && npm test && npm run build
 cd mock-llm && npm test
 ```
 
-## Running without Docker
+## Running the Java backend without Docker
 ```bash
 # Postgres 16/17 with pgvector (Debian: apt install postgresql-17 postgresql-17-pgvector)
 sudo -u postgres psql -c "create user kh with password 'kh' superuser" -c "create database knowledgehub owner kh"
@@ -92,16 +110,35 @@ an OIDC resource server in production; the header is spoofable by design of the 
 - Residual risk: the model can still be steered within the user's *own* documents; answers are shown as text (no HTML).
 
 ## Demo script (Phase 4)
-1. `docker compose up --build` (or the no-Docker steps). Open http://localhost:5173, user `alice`.
+1. `./run-local.sh` (no Docker; Python backend) or `docker compose up --build` (Java backend). Open http://localhost:5173, user `alice`.
 2. Upload `docs/sample-policy.md` → status goes `PENDING` → `READY` (polling stops automatically).
 3. Ask "How many days of annual leave do I get?" → tokens stream in; sources appear. Ask again and press **Stop**
    mid-answer → UI shows *Stopped*; mock-llm logs `client disconnected after N/M tokens` (backend stopped reading).
 4. Click **Summarize** → 202 job, result appears when the job completes.
-5. Switch user to `bob` → list is empty; `curl -H 'X-User-Id: bob' localhost:8080/api/documents/<alice-id>` → 404.
+5. Switch user to `bob` → list is empty; `curl -H 'X-User-Id: bob' localhost:5173/api/documents/<alice-id>` → 404.
 6. Resilience: `FAIL_RATE_429=0.5 docker compose up mock-llm` → backend logs `retrying in … ms`, UI keeps working;
    stop mock-llm → after a few failures the circuit opens and the UI shows "temporarily unavailable (circuit open)"
    instantly instead of hanging.
 7. Show tests: `mvn test`, `npm test`.
+
+## Python backend (`backend-python/`) — design mapping
+| Concern | Java (`backend/`) | Python (`backend-python/`) |
+|---|---|---|
+| Layers | controller/service/repository | `routers/` → `services/` → `repositories/` (psycopg3 async pool, raw SQL, pgvector `<=>`) |
+| DTOs | Java records | Pydantic v2 models (`schemas.py`, camelCase aliases) |
+| DI | constructor injection | `container.py` composition root + `Depends` (`deps.py`); tests override with fakes |
+| Auth | `UserIdFilter` + ThreadLocal | async `current_user_id` dependency (401) + `contextvars.ContextVar` |
+| Migrations | Flyway | `db/migration/V1__init.sql` (same SQL, read-only) applied in order by `app/db.py` (`schema_history` table) |
+| Async jobs | `llmExecutor` ThreadPoolTaskExecutor + AbortPolicy + TaskDecorator | `BoundedTaskQueue`: 4 asyncio workers, `Queue(maxsize=100)`, `put_nowait` → `Busy` → 503 + Retry-After; job runs via `create_task(..., context=copied_ctx)` so the user id propagates |
+| SSE | `SseEmitter` + executor | `StreamingResponse(async generator)`, checks `request.is_disconnected()` per token and stops iterating the upstream httpx stream (closes it); concurrent streams capped (`MAX_CONCURRENT_STREAMS`) |
+| LLM client | RestClient + Resilience4j | `httpx.AsyncClient` with explicit `Timeout(connect, read)`, hand-rolled retry + count-based circuit breaker (closed/open/half-open; only 429/503/timeouts recorded; cancellations don't wedge half-open) |
+| Tests | JUnit, Mockito, WireMock, MockMvc | pytest + pytest-asyncio, **respx** (retry/breaker), in-memory fakes, FastAPI `TestClient` |
+
+Why a bounded asyncio queue instead of `BackgroundTasks`: `BackgroundTasks` is unbounded (every request schedules work,
+no back-pressure) and runs after the response in the same worker with no concurrency limit against a rate-limited LLM.
+A bounded queue gives an explicit concurrency cap and a fail-fast 503 when saturated — the same reasoning as AbortPolicy.
+Celery/RQ would add durability across restarts (jobs are in-memory here) at the cost of Redis + a worker process.
+Event-loop note: all I/O is async (psycopg async, httpx), so a slow LLM never blocks the loop; no CPU-heavy work runs in handlers.
 
 ## Repository layout
 See the folder map in `AGENTS.md`. Code review of the original code: `REVIEW.md`. Refactor log: `PROMPTS.md`.
