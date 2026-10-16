@@ -1,5 +1,5 @@
 """Document use-cases (upload/list/get/delete) plus the ownership checks that other services call.
-Legacy shape: access rules are written inline in each method."""
+Access rules are delegated to DocumentPermissionService."""
 from __future__ import annotations
 
 import uuid
@@ -11,6 +11,7 @@ from app.errors import BadRequest, Busy, NotFound
 from app.models import Document
 from app.repositories.document_repository import DocumentRepository
 from app.schemas import DocumentDetailResponse, DocumentResponse
+from app.services.document_permission_service import DocumentPermissionService
 from app.services.ingestion_service import IngestionService
 from app.services.task_queue import BoundedTaskQueue
 
@@ -20,8 +21,10 @@ ALLOWED_EXTENSIONS = {"txt", "md"}
 
 class LegacyDocumentService:
     def __init__(self, documents: DocumentRepository, ingestion: IngestionService | None, queue: BoundedTaskQueue | None,
-                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+                 permissions: DocumentPermissionService | None = None):
         self._documents, self._ingestion, self._queue, self._clock = documents, ingestion, queue, clock
+        self._permissions = permissions if permissions is not None else DocumentPermissionService(documents)
 
     async def upload(self, user_id: str, title: str | None, filename: str | None, data: bytes) -> DocumentResponse:
         if not data:
@@ -56,29 +59,16 @@ class LegacyDocumentService:
         return [DocumentResponse.of(d) for d in await self._documents.find_by_owner(user_id, q, 200)]
 
     async def get(self, doc_id: UUID, user_id: str) -> DocumentDetailResponse:
-        doc = await self._documents.find_by_id(doc_id)
-        if doc is None or user_id is None or doc.owner_id != user_id:
-            raise NotFound("Document not found")
-        return DocumentDetailResponse.of(doc)
+        return DocumentDetailResponse.of(await self._permissions.require_readable(doc_id, user_id))
 
     async def delete(self, doc_id: UUID, user_id: str) -> None:
-        doc = await self._documents.find_by_id(doc_id)
-        if doc is None or user_id is None or doc.owner_id != user_id:
-            raise NotFound("Document not found")
+        await self._permissions.require_readable(doc_id, user_id)
         if not await self._documents.delete_by_id_and_owner(doc_id, user_id):
             raise NotFound("Document not found")
 
     # --- ownership checks used by retrieval, summaries and the chat router ---
     async def require_readable(self, document_id: UUID, user_id: str) -> Document:
-        doc = await self._documents.find_by_id(document_id)
-        if doc is None or user_id is None or doc.owner_id != user_id:
-            raise NotFound("Document not found")
-        return doc
+        return await self._permissions.require_readable(document_id, user_id)
 
     async def require_all_readable(self, document_ids: Iterable[UUID], user_id: str) -> list[UUID]:
-        ids = list(document_ids)
-        for i in ids:
-            doc = await self._documents.find_by_id(i)
-            if doc is None or user_id is None or doc.owner_id != user_id:
-                raise NotFound("Document not found")
-        return ids
+        return await self._permissions.require_all_readable(document_ids, user_id)
