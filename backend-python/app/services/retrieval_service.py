@@ -5,11 +5,11 @@ from uuid import UUID
 from app.clients.llm_client import LlmClient
 from app.models import RetrievedChunk
 from app.repositories.chunk_repository import ChunkRepository
-from app.services.document_permission_service import DocumentPermissionService
+from app.services.legacy_document_service import LegacyDocumentService
 
 
 class RetrievalService:
-    def __init__(self, llm: LlmClient, chunks: ChunkRepository, permissions: DocumentPermissionService, top_k: int = 5):
+    def __init__(self, llm: LlmClient, chunks: ChunkRepository, permissions: LegacyDocumentService, top_k: int = 5):
         self._llm, self._chunks, self._permissions, self._top_k = llm, chunks, permissions, top_k
 
     async def retrieve(self, user_id: str, question: str, document_ids: list[UUID]) -> list[RetrievedChunk]:

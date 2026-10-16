@@ -8,7 +8,6 @@ from app.config import Settings
 from app.repositories.job_repository import JobRepository
 from app.services.chat_stream_service import ChatStreamService
 from app.services.chunking_service import ChunkingService
-from app.services.document_permission_service import DocumentPermissionService
 from app.services.ingestion_service import IngestionService
 from app.services.job_service import JobService
 from app.services.legacy_document_service import LegacyDocumentService
@@ -25,7 +24,7 @@ class Container:
     llm: LlmClient
     queue: BoundedTaskQueue
     documents: LegacyDocumentService
-    permissions: DocumentPermissionService
+    permissions: LegacyDocumentService
     summaries: SummaryService
     chat: ChatStreamService
     rag: RagService
@@ -36,14 +35,14 @@ def build(settings: Settings, doc_repo, chunk_repo) -> Container:
     """doc_repo/chunk_repo: Postgres or in-memory implementations (same interface)."""
     llm = LlmClient(settings.llm)
     queue = BoundedTaskQueue(settings.workers, settings.queue_capacity)
-    permissions = DocumentPermissionService(doc_repo)
     prompts = PromptBuilder()
     ingestion = IngestionService(doc_repo, chunk_repo, ChunkingService(settings.chunk_size, settings.chunk_overlap), llm)
+    permissions = LegacyDocumentService(doc_repo, ingestion, queue)
     retrieval = RetrievalService(llm, chunk_repo, permissions, settings.top_k)
     jobs = JobService(JobRepository())
     return Container(
         llm=llm, queue=queue,
-        documents=LegacyDocumentService(doc_repo, permissions, ingestion, queue),
+        documents=permissions,
         permissions=permissions,
         summaries=SummaryService(permissions, jobs, SummaryWorker(permissions, jobs, prompts, llm), queue),
         chat=ChatStreamService(retrieval, prompts, llm),
