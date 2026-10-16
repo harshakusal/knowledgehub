@@ -1,68 +1,108 @@
-# PROMPTS.md — AI-assisted refactor: extracting `DocumentPermissionService`
+# PROMPTS.md — Q1.2: extracting `DocumentPermissionService` with an AI coding agent
 
-Goal: move the ad-hoc ownership checks scattered through `LegacyDocumentService` (and duplicated in the original
-controller) into one `DocumentPermissionService`, **without changing observable behaviour**.
+> **Provenance:** this session was executed by an AI coding agent (**Grok Bot**) on **2026-10-16** (IST) against the
+> Python backend (`backend-python/`). Every prompt, command output and diff stat below is copied from the real run;
+> the step-by-step raw log is in [`docs/q12-session-log.md`](docs/q12-session-log.md).
+> Git history shows it: branch `q12-legacy-baseline` (the "before" state) → branch `q12-refactor` (3 commits) → merged
+> into `main`.
+>
+> An earlier version of this file described the refactor as a narrative that had not actually been recorded. It has been
+> replaced. The Java backend (`backend/`) already had `DocumentPermissionService` when it was first written; no
+> recorded refactor session exists for it.
 
-## 1. Context & scoping prompt
-> You are working in KnowledgeHub. Read AGENTS.md first and follow it. Task: extract permission logic from
-> `service/LegacyDocumentService.java` into a new `service/DocumentPermissionService.java`.
-> **You may only touch:** `LegacyDocumentService.java`, `DocumentPermissionService.java` (new),
-> `LegacyDocumentServiceTest.java`, `DocumentPermissionServiceTest.java` (new). Ask before touching anything else.
-> Do NOT edit migrations, controllers, or repositories. Do not write code yet.
+## 0. Setting up an honest "before" state
+The Python service had been written with the permission service already extracted, so it was first put back into its
+legacy shape (commit `44db76e`, branch `q12-legacy-baseline`): the ownership predicate
+`doc is None or user_id is None or doc.owner_id != user_id → NotFound("Document not found")` was written inline
+**four times** in `LegacyDocumentService` (`get`, `delete`, `require_readable`, `require_all_readable`), and
+`document_permission_service.py` plus its test were deleted. `pytest`: 59 passed.
 
-Why: explicit file allow-list keeps the diff reviewable and prevents "helpful" drive-by edits.
+## 1. Scoping (file allow-list)
+Prompt acted on:
+> plan-only step: read CLAUDE.md, inspect the legacy file, write the plan (files allowed: legacy_document_service.py,
+> new document_permission_service.py, their tests) with NO edits
 
-## 2. Plan-before-edit prompt
-> List every place in `LegacyDocumentService` that decides whether a user may see/modify a document. For each,
-> state the current behaviour (status/exception for missing doc, foreign doc, null user). Then propose the new
-> API of `DocumentPermissionService` and the exact call-site changes. Wait for my approval.
+The relevant CLAUDE.md rules were read with `grep` (constructor injection only; every new service method gets a test;
+migrations read-only; **scope rule 7: touch only files named in the task, ask before others**).
+Allowed: `app/services/legacy_document_service.py`, `app/services/document_permission_service.py` (new),
+`tests/test_legacy_document_service.py` (new), `tests/test_document_permission_service.py` (new).
 
-Agreed plan: `requireReadable(UUID, String) -> Document` (404 for missing **and** foreign),
-`canRead(Document, String)`, `requireAllReadable(Collection<UUID>, String)` for chat/RAG scoping.
-`get` and `delete` delegate; `list` stays owner-scoped at the query level (a permission check per row would be N+1).
+## 2. Plan before edit
+Written with zero edits (`git status --short | wc -l` → `0`):
+1. New `DocumentPermissionService(documents)` with `can_read`, `require_readable`, `require_all_readable`, the same
+   semantics (404 for a missing document, someone else's document, or no user).
+2. Constructor injection into `LegacyDocumentService` as a new **last** parameter
+   `permissions: DocumentPermissionService | None = None` (defaults to `DocumentPermissionService(documents)`).
+   Why: `container.py` and existing tests build `LegacyDocumentService(documents, ingestion, queue)` positionally;
+   requiring the new argument would force edits outside the allow-list.
+3. Keep `LegacyDocumentService.require_readable/require_all_readable` as thin delegates, so callers in
+   `retrieval_service.py`, `summary_service.py` and `routers/chat.py` (found with `grep`) stay untouched.
+4. Characterization tests first, green on unchanged code, committed; then refactor without editing them.
+5. Explicitly deferred: rewiring callers/container to the new service, renaming `LegacyDocumentService`.
 
-## 3. Behaviour protection: characterization tests first
-> Before refactoring, write characterization tests for `LegacyDocumentService` that pin current behaviour:
-> upload stores owner/title/PENDING and triggers ingestion; validation errors; list is owner-scoped;
-> get/delete of another user's document throw NotFoundException and never call delete; owner can delete.
-> Run `mvn test` and show me they pass on the UNCHANGED code.
+## 3. Behaviour protection — characterization tests
+Prompt acted on:
+> write characterization tests pinning current behaviour (owner read/delete ok, other user not-found, missing user
+> rejected, etc.), run pytest, capture real pass output; commit
 
-Result: `LegacyDocumentServiceTest` (7 tests) green before the change. Then:
-
-> Now perform the extraction exactly as planned. Keep `LegacyDocumentServiceTest` unchanged except for the
-> constructor wiring. Add `DocumentPermissionServiceTest`. Run `mvn test`.
-
-## 4. Verification
+`tests/test_legacy_document_service.py`, 9 tests, run against the **unchanged** legacy code:
 ```
-$ git diff --stat   (refactor step, as recorded during the session; the repo history squashes it into the backend commit)
- .../service/DocumentPermissionService.java       | 41 +++++++++++
- .../service/LegacyDocumentService.java           | 21 ++---
- .../service/LegacyDocumentServiceTest.java       |  3 +-
- .../service/DocumentPermissionServiceTest.java   | 53 ++++++++++++++
+test_owner_can_get PASSED
+test_other_user_get_is_not_found PASSED
+test_missing_document_get_is_not_found PASSED
+test_missing_user_is_rejected PASSED
+test_owner_can_delete PASSED
+test_other_user_delete_is_not_found_and_deletes_nothing PASSED
+test_require_readable_returns_owned_document PASSED
+test_require_all_readable_returns_ids_in_order_or_rejects_any_foreign PASSED
+test_list_only_returns_callers_documents PASSED
+============================== 9 passed in 0.14s ===============================
+full suite: 68 passed in 0.69s
 ```
-Checked: only allow-listed files; characterization tests unchanged in assertions; `mvn test` green.
+Committed as `7960983 test: characterization tests for LegacyDocumentService access rules (Q1.2)`.
 
-## 5. Rejected suggestions (and why)
-| AI suggestion | Decision | Reason |
+## 4. The extraction
+Prompt acted on:
+> do the extraction with constructor injection, no behaviour change, only allowed files; run pytest + npm test,
+> capture real output
+
+New `document_permission_service.py`; `LegacyDocumentService` delegates from `get`, `delete`, `require_readable`,
+`require_all_readable` (4 duplicated blocks removed); new `tests/test_document_permission_service.py` (4 tests,
+including a spy proving the injected instance is used). The characterization test file was **not modified**
+(`git diff --stat 7960983..HEAD -- tests/test_legacy_document_service.py` is empty).
+```
+pytest -q                     → 72 passed in 0.77s
+characterization + new tests  → 13 passed in 0.13s
+frontend npx vitest run       → Test Files 3 passed (3), Tests 12 passed (12)
+```
+
+## 5. Self-review and rejected changes (only what actually happened)
+Prompt acted on:
+> review your own diff; if anything was outside scope or unnecessary (e.g. renames, reformatting), revert it and record
+> the rejection with reason
+
+| Change found in my own diff | Decision | Reason |
 |---|---|---|
-| Rename `LegacyDocumentService` → `DocumentService` in the same change | Rejected | Out of scope; touches controller + tests; do it as a separate, mechanical PR. |
-| Return **403** for foreign documents | Rejected | Leaks existence of other users' ids; 404 is the agreed contract (tests pin it). |
-| Add `owner_id` index via editing `V1__init.sql` | Rejected | Migrations are read-only (AGENTS.md rule 5); index already exists; any change needs `V2__` + approval. |
-| Use Spring Security `@PreAuthorize("@perm.canRead(#id)")` | Rejected (for now) | Would pull in Spring Security & SpEL for a stub-auth assessment; explicit call is easier to test/read. |
-| Per-row permission filter in `list()` | Rejected | N+1 queries; owner predicate in SQL is both faster and safer. |
-| Catch-all `try/catch (Exception)` returning `null` in `requireReadable` | Rejected | Hides failures and turns them into NPEs later. |
-| "While I'm here" reformatting of `ChunkingService` | Rejected | Not in allow-list. |
+| Module docstring rewritten to add "(extracted in Q1.2, see PROMPTS.md)" | **Rejected** (reverted) | Unnecessary doc churn / cross-reference in code. After reverting, the original sentence ("access rules are written inline in each method") was false, so only a minimal accurate sentence was kept: "Access rules are delegated to DocumentPermissionService." |
+| `permissions or DocumentPermissionService(documents)` | **Changed** to `if permissions is not None else …` | A truthiness check would silently replace an injected object that evaluates falsy. In scope, behaviour-neutral. |
+| Rewire `container.py`, retrieval, summary, chat router to the new service; rename `LegacyDocumentService` | **Not done** (considered, deferred) | Outside the file allow-list (scope rule 7); needs approval as a follow-up. |
 
-## Python port of the same refactor (`backend-python/app/services/`)
-Same workflow, Python allow-list: `legacy_document_service.py`, `document_permission_service.py` (new),
-`tests/test_services.py`. Plan prompt asked for the call-site list first; characterization tests
-(`test_upload_*`, `test_list_scoped_and_get_delete_foreign_are_404`) were written against in-memory fakes
-(`tests/fakes.py`) and kept unchanged across the extraction; `pytest` green before and after.
+No renames or reformatting happened, so none are listed. Post-review: `pytest` 72 passed, characterization 9 passed,
+`npm test` 12 passed. Committed as
+`51bb48e refactor: extract DocumentPermissionService from LegacyDocumentService (constructor-injected, no behaviour change)`.
 
-Rejected Python-specific suggestions:
-| Suggestion | Reason |
-|---|---|
-| Make `require_readable` a FastAPI dependency (`Depends(load_owned_document)`) | Couples authorization to HTTP; services (RAG, summary worker) need the same check off-request. |
-| Use `BackgroundTasks` for summaries | Unbounded, no back-pressure or concurrency cap against a rate-limited LLM (see README). |
-| `pybreaker` for the circuit breaker | Its listeners/state are sync-oriented and it counts every exception; we need to record only retryable errors and ignore cancellations — a 60-line breaker is clearer and fully tested. |
-| SQLAlchemy ORM models returned from routers | Re-introduces entity exposure; raw SQL + Pydantic DTOs keep the contract explicit. |
+## 6. Real `git diff --stat q12-legacy-baseline..HEAD` (code commits)
+```
+ .../app/services/document_permission_service.py    | 32 ++++++++
+ .../app/services/legacy_document_service.py        | 28 +++----
+ .../tests/test_document_permission_service.py      | 62 +++++++++++++++
+ .../tests/test_legacy_document_service.py          | 87 ++++++++++++++++++++++
+ 4 files changed, 190 insertions(+), 19 deletions(-)
+```
+Only the four allow-listed files changed.
+
+## 7. Takeaways
+- Writing the plan before any edit surfaced the outside callers early, which led to the "keep delegates + optional
+  constructor argument" design that kept the change inside the allow-list.
+- Characterization tests committed *before* the refactor make "no behaviour change" checkable, not just claimed.
+- Reviewing my own diff caught one unnecessary edit and one latent bug (`or` vs `is not None`).

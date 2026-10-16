@@ -160,4 +160,4 @@ Celery/RQ would add durability across restarts (jobs are in-memory here) at the 
 Event-loop note: all I/O is async (psycopg async, httpx), so a slow LLM never blocks the loop; no CPU-heavy work runs in handlers.
 
 ## Repository layout
-See the folder map in `AGENTS.md`. Code review of the original code: `REVIEW.md`. Refactor log: `PROMPTS.md`.
+See the folder map in `AGENTS.md`. Code review of the original code: `REVIEW.md`. Q1.2 refactor (real recorded session): `PROMPTS.md`, raw log `docs/q12-session-log.md`.
