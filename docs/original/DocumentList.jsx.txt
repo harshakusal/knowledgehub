@@ -1,0 +1,36 @@
+// ORIGINAL buggy component as given in the assessment (kept for REVIEW.md; not built).
+import { useState, useEffect } from 'react';
+
+export default function DocumentList({ userId }) {
+  const [docs, setDocs] = useState([]);
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    setQuery(query.trim());
+  });
+
+  useEffect(async () => {
+    const res = await fetch('/api/documents?q=' + query + '&user=' + userId);
+    const data = await res.json();
+    setDocs(data);
+  }, [query]);
+
+  useEffect(() => {
+    setInterval(async () => {
+      const res = await fetch('/api/documents?q=' + query);
+      const data = await res.json();
+      setDocs(docs.concat(data));
+    }, 3000);
+  }, []);
+
+  return (
+    <div>
+      <input value={query} onChange={(e) => setQuery(e.target.value)} />
+      <ul>
+        {docs.map((d, i) => (
+          <li key={i} dangerouslySetInnerHTML={{ __html: d.title }} />
+        ))}
+      </ul>
+    </div>
+  );
+}

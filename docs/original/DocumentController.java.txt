@@ -1,0 +1,39 @@
+// ORIGINAL AI-generated controller as given in the assessment (kept for REVIEW.md; not compiled).
+@RestController
+@RequestMapping("/api/documents")
+public class DocumentController {
+
+    @Autowired
+    private DocumentRepository documentRepository;
+
+    @Autowired
+    private LlmClient llmClient;
+
+    @GetMapping
+    public List<Document> getAll() {
+        return documentRepository.findAll();
+    }
+
+    @GetMapping("/{id}")
+    public Document get(@PathVariable Long id) {
+        return documentRepository.findById(id).get();
+    }
+
+    @PostMapping("/{id}/summary")
+    public String summarize(@PathVariable Long id, @RequestParam String style) {
+        Document doc = documentRepository.findById(id).get();
+        String prompt = "Summarize this document in a " + style + " style:\n" + doc.getContent();
+        return llmClient.complete(prompt);
+    }
+
+    @PostMapping
+    public Document upload(@RequestBody Document doc) {
+        return documentRepository.save(doc);
+    }
+
+    @DeleteMapping("/{id}")
+    public String delete(@PathVariable Long id) {
+        documentRepository.deleteById(id);
+        return "deleted";
+    }
+}
