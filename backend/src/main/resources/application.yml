@@ -1,0 +1,48 @@
+server:
+  port: ${SERVER_PORT:8080}
+spring:
+  application:
+    name: knowledgehub
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/knowledgehub}
+    username: ${DB_USER:kh}
+    password: ${DB_PASSWORD:}
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_SIZE:5MB}
+      max-request-size: ${MAX_UPLOAD_SIZE:5MB}
+  mvc:
+    async:
+      request-timeout: 120s
+  flyway:
+    enabled: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+llm:
+  base-url: ${LLM_BASE_URL:http://localhost:4000}
+  api-key: ${LLM_API_KEY:}
+  model: ${LLM_MODEL:mock-1}
+  embedding-dim: ${LLM_EMBEDDING_DIM:384}
+  connect-timeout: ${LLM_CONNECT_TIMEOUT:2s}
+  read-timeout: ${LLM_READ_TIMEOUT:30s}
+  max-attempts: 4
+  initial-backoff: 200ms
+  max-backoff: 5s
+  max-retry-after: 10s
+  circuit-failure-rate: 50
+  circuit-min-calls: 6
+  circuit-window: 10
+  circuit-open-duration: 20s
+app:
+  executor:
+    core-size: ${LLM_EXECUTOR_CORE:4}
+    max-size: ${LLM_EXECUTOR_MAX:16}
+    queue-capacity: ${LLM_EXECUTOR_QUEUE:100}
+  rag:
+    top-k: 5
+    chunk-size: 500
+    chunk-overlap: 50
+  sse-timeout: 120s
