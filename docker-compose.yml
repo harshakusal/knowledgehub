@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-knowledgehub}
+      POSTGRES_USER: ${POSTGRES_USER:-kh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kh}
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+
+  mock-llm:
+    build: ./mock-llm
+    environment:
+      PORT: 4000
+      EMBEDDING_DIM: ${LLM_EMBEDDING_DIM:-384}
+      FAIL_RATE_429: ${FAIL_RATE_429:-0.1}
+      FAIL_RATE_503: ${FAIL_RATE_503:-0.05}
+      TOKEN_DELAY_MS: ${TOKEN_DELAY_MS:-40}
+    ports: ["4000:4000"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-knowledgehub}
+      DB_USER: ${POSTGRES_USER:-kh}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-kh}
+      LLM_BASE_URL: http://mock-llm:4000
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_EMBEDDING_DIM: ${LLM_EMBEDDING_DIM:-384}
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      mock-llm: { condition: service_healthy }
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8080
+    ports: ["5173:5173"]
+    depends_on: [backend]
+
+volumes:
+  pgdata:
