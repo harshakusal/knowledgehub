@@ -12,6 +12,25 @@ browser (React/Vite) ──/api──▶ Spring Boot 3 (Java 21) | FastAPI (Pyth
                               mock-llm (Node): /v1/embeddings, /v1/chat (SSE), random 429/503
 ```
 
+## Windows, no database (no Docker, Postgres blocked)
+The Python backend defaults to **`STORAGE=memory`** when `DATABASE_URL` is unset: in-memory repositories with the
+same interfaces (owner-filtered pure-Python cosine top-k instead of pgvector, cascade delete). No pool, no migrations.
+Data lives in RAM and is lost on restart. Set `DATABASE_URL` (or `STORAGE=postgres`) to use Postgres as before.
+
+Prereqs: Node 20+, Python 3.12+ (`run.py` uses `asyncio.run(loop_factory=...)`). In `cmd.exe`:
+```bat
+cd C:\path\to\knowledgehub
+run-windows.bat
+```
+or manually, in three cmd windows:
+```bat
+cd knowledgehub\mock-llm && node server.js
+cd knowledgehub\backend-python && python -m venv .venv && .venv\Scripts\python -m pip install -r requirements.txt && .venv\Scripts\python run.py
+cd knowledgehub\frontend && npm install && npm run dev
+```
+Open http://localhost:5173 (Vite proxies `/api` to `http://localhost:8000` by default; override with `set BACKEND_URL=...`).
+Tests: `.venv\Scripts\python -m pip install -r requirements-dev.txt && .venv\Scripts\python -m pytest` and `npm test`.
+
 ## Quick start without Docker (Python backend) — verified
 Prereqs: PostgreSQL 16/17 + pgvector (Debian/Ubuntu: `sudo apt install postgresql-17 postgresql-17-pgvector`),
 Node 20+, Python 3.11+.
@@ -25,7 +44,7 @@ sudo -u postgres psql -d knowledgehub_py -c "create extension vector"
 cd mock-llm && node server.js
 cd backend-python && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt \
    && DATABASE_URL=postgresql://kh:kh@localhost:5432/knowledgehub_py .venv/bin/uvicorn app.main:app --port 8000
-cd frontend && npm ci && BACKEND_URL=http://localhost:8000 npm run dev      # http://localhost:5173
+cd frontend && npm ci && npm run dev      # http://localhost:5173 (proxy default http://localhost:8000)
 ```
 Tests: `cd backend-python && .venv/bin/pytest` · `cd frontend && npm test` · `cd mock-llm && npm test`.
 The frontend is unchanged: both backends expose the identical API; only `BACKEND_URL` (proxy target) differs.

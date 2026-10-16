@@ -61,6 +61,7 @@ mock-llm/                  server.js (embeddings, streaming chat, random 429/503
 - DI: objects built once in `container.py`; routers get services via `Depends` (`deps.py`). No module-level singletons.
 - Auth: `Depends(current_user_id)` (async, sets the `current_user` contextvar). LLM work goes through
   `BoundedTaskQueue.submit` (copies contextvars) and `LlmClient` (httpx; retries + breaker).
+- Storage: `STORAGE=memory` (default when `DATABASE_URL` unset; `repositories/memory.py`) or `postgres`; both share one interface.
 - Migrations: `backend-python/db/migration/V<n>__*.sql`, read-only, same rule 5. Async everywhere (no blocking I/O
   in handlers). Names: `snake_case.py`, `test_*.py`; every new service function gets a pytest test.
 
