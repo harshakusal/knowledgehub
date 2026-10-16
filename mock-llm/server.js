@@ -4,6 +4,7 @@
 //                           {stream:false}: {"choices":[{"message":{"content":"..."}}]} (JSON answer if response_format json_object)
 // Chaos: random 429 (with Retry-After) and 503, controlled by FAIL_RATE_429 / FAIL_RATE_503.
 import http from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 const PORT = Number(process.env.PORT ?? 4000);
 const DIM = Number(process.env.EMBEDDING_DIM ?? 384);
@@ -135,6 +136,7 @@ export function createServer() {
   });
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL makes this work on Windows too (C:\... -> file:///C:/...)
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   createServer().listen(PORT, () => console.log(`[mock-llm] listening on :${PORT} dim=${DIM} 429=${RATE_429} 503=${RATE_503}`));
 }
