@@ -6,7 +6,7 @@ from app.clients.llm_client import LlmClient
 from app.context import require_user
 from app.errors import Busy
 from app.schemas import JobResponse
-from app.services.document_permission_service import DocumentPermissionService
+from app.services.legacy_document_service import LegacyDocumentService
 from app.services.job_service import JobService
 from app.services.prompt_builder import PromptBuilder
 from app.services.task_queue import BoundedTaskQueue
@@ -17,7 +17,7 @@ MAX_CHARS = 12_000
 class SummaryWorker:
     """Runs on the task queue. Re-checks permission using the PROPAGATED contextvar user id."""
 
-    def __init__(self, permissions: DocumentPermissionService, jobs: JobService, prompts: PromptBuilder, llm: LlmClient):
+    def __init__(self, permissions: LegacyDocumentService, jobs: JobService, prompts: PromptBuilder, llm: LlmClient):
         self._permissions, self._jobs, self._prompts, self._llm = permissions, jobs, prompts, llm
 
     async def summarize(self, job_id: UUID, document_id: UUID) -> str | None:
@@ -33,7 +33,7 @@ class SummaryWorker:
 
 
 class SummaryService:
-    def __init__(self, permissions: DocumentPermissionService, jobs: JobService, worker: SummaryWorker,
+    def __init__(self, permissions: LegacyDocumentService, jobs: JobService, worker: SummaryWorker,
                  queue: BoundedTaskQueue):
         self._permissions, self._jobs, self._worker, self._queue = permissions, jobs, worker, queue
 

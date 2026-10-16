@@ -10,7 +10,6 @@ from app.models import Document, RetrievedChunk
 from app.schemas import RagAnswer
 from app.services.chat_stream_service import ChatStreamService
 from app.services.chunking_service import ChunkingService
-from app.services.document_permission_service import DocumentPermissionService
 from app.services.ingestion_service import IngestionService
 from app.services.job_service import JobService
 from app.services.legacy_document_service import LegacyDocumentService
@@ -39,25 +38,9 @@ class RecordingQueue:
         self.jobs.append(fn)
 
 
-# ---------- DocumentPermissionService ----------
-async def test_permission_owner_reads_other_gets_404():
-    repo = FakeDocumentRepository()
-    d = doc()
-    await repo.insert(d)
-    perms = DocumentPermissionService(repo)
-    assert await perms.require_readable(d.id, "alice") == d
-    with pytest.raises(NotFound):
-        await perms.require_readable(d.id, "bob")
-    with pytest.raises(NotFound):
-        await perms.require_readable(uuid.uuid4(), "alice")
-    assert not perms.can_read(d, None)
-    with pytest.raises(NotFound):
-        await perms.require_all_readable([d.id, uuid.uuid4()], "alice")
-
-
 # ---------- LegacyDocumentService (characterization tests) ----------
 def legacy(repo, queue):
-    return LegacyDocumentService(repo, DocumentPermissionService(repo), None, queue, clock=lambda: NOW)
+    return LegacyDocumentService(repo, None, queue, clock=lambda: NOW)
 
 
 async def test_upload_stores_pending_for_owner_and_queues_ingestion():
@@ -151,7 +134,7 @@ async def test_retrieval_is_owner_scoped_and_rejects_foreign_ids_before_embeddin
     a = doc("alice")
     await repo.insert(a)
     llm = FakeLlm()
-    r = RetrievalService(llm, chunks, DocumentPermissionService(repo), 5)
+    r = RetrievalService(llm, chunks, LegacyDocumentService(repo, None, None), 5)
     await r.retrieve("alice", "q", [a.id])
     assert chunks.searches == [("alice", [a.id], 5)]
     with pytest.raises(NotFound):
@@ -275,7 +258,7 @@ async def test_summary_job_lifecycle_with_context_propagation():
     repo = FakeDocumentRepository()
     d = doc("alice")
     await repo.insert(d)
-    perms = DocumentPermissionService(repo)
+    perms = LegacyDocumentService(repo, None, None)
     jobs = JobService(JobRepository())
     llm = FakeLlm(["- summary"])
     queue = BoundedTaskQueue(workers=1, capacity=5)
@@ -301,7 +284,7 @@ async def test_summary_foreign_document_rejected_before_job():
     repo = FakeDocumentRepository()
     d = doc("alice")
     await repo.insert(d)
-    perms = DocumentPermissionService(repo)
+    perms = LegacyDocumentService(repo, None, None)
     q = RecordingQueue()
     with pytest.raises(NotFound):
         await SummaryService(perms, JobService(JobRepository()), None, q).request_summary(d.id, "bob")
@@ -314,7 +297,7 @@ async def test_summary_busy_marks_job_failed():
     await repo.insert(d)
     jr = JobRepository()
     with pytest.raises(Busy):
-        await SummaryService(DocumentPermissionService(repo), JobService(jr), None, RecordingQueue(True)).request_summary(d.id, "alice")
+        await SummaryService(LegacyDocumentService(repo, None, None), JobService(jr), None, RecordingQueue(True)).request_summary(d.id, "alice")
     assert [j.status for j in jr._jobs.values()] == ["FAILED"]
 
 
@@ -324,7 +307,7 @@ async def test_worker_failure_marks_job_failed():
     job = jobs.create("alice", uuid.uuid4())
     current_user.set("alice")
     with pytest.raises(NotFound):
-        await SummaryWorker(DocumentPermissionService(repo), jobs, PromptBuilder(), FakeLlm()).summarize(job.id, job.document_id)
+        await SummaryWorker(LegacyDocumentService(repo, None, None), jobs, PromptBuilder(), FakeLlm()).summarize(job.id, job.document_id)
     assert jobs.get(job.id, "alice").status == "FAILED"
 
 

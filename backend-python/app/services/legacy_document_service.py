@@ -1,10 +1,10 @@
-"""Document use-cases (upload/list/get/delete). Historical name kept to limit refactor blast radius;
-permission logic now lives in DocumentPermissionService (see PROMPTS.md)."""
+"""Document use-cases (upload/list/get/delete) plus the ownership checks that other services call.
+Access rules are delegated to DocumentPermissionService."""
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Iterable
 from uuid import UUID
 
 from app.errors import BadRequest, Busy, NotFound
@@ -20,11 +20,11 @@ ALLOWED_EXTENSIONS = {"txt", "md"}
 
 
 class LegacyDocumentService:
-    def __init__(self, documents: DocumentRepository, permissions: DocumentPermissionService,
-                 ingestion: IngestionService, queue: BoundedTaskQueue,
-                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)):
-        self._documents, self._permissions, self._ingestion, self._queue, self._clock = (
-            documents, permissions, ingestion, queue, clock)
+    def __init__(self, documents: DocumentRepository, ingestion: IngestionService | None, queue: BoundedTaskQueue | None,
+                 clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+                 permissions: DocumentPermissionService | None = None):
+        self._documents, self._ingestion, self._queue, self._clock = documents, ingestion, queue, clock
+        self._permissions = permissions if permissions is not None else DocumentPermissionService(documents)
 
     async def upload(self, user_id: str, title: str | None, filename: str | None, data: bytes) -> DocumentResponse:
         if not data:
@@ -65,3 +65,10 @@ class LegacyDocumentService:
         await self._permissions.require_readable(doc_id, user_id)
         if not await self._documents.delete_by_id_and_owner(doc_id, user_id):
             raise NotFound("Document not found")
+
+    # --- ownership checks used by retrieval, summaries and the chat router ---
+    async def require_readable(self, document_id: UUID, user_id: str) -> Document:
+        return await self._permissions.require_readable(document_id, user_id)
+
+    async def require_all_readable(self, document_ids: Iterable[UUID], user_id: str) -> list[UUID]:
+        return await self._permissions.require_all_readable(document_ids, user_id)

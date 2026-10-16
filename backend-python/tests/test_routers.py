@@ -11,7 +11,6 @@ from app.main import create_app
 from app.models import Document, RetrievedChunk
 from app.repositories.job_repository import JobRepository
 from app.services.chat_stream_service import ChatStreamService
-from app.services.document_permission_service import DocumentPermissionService
 from app.services.job_service import JobService
 from app.services.legacy_document_service import LegacyDocumentService
 from app.services.prompt_builder import PromptBuilder
@@ -30,14 +29,14 @@ def env():
     repo = FakeDocumentRepository()
     d = Document(uuid.uuid4(), "alice", "Policy", "abc", "READY", datetime(2026, 1, 1, tzinfo=timezone.utc))
     repo.docs[d.id] = d
-    perms = DocumentPermissionService(repo)
-    jobs = JobService(JobRepository())
     queue = RecordingQueue()
+    perms = LegacyDocumentService(repo, None, queue)
+    jobs = JobService(JobRepository())
     llm = FakeLlm(tokens=["Twenty ", "days."],
                   completions=['{"answer":"x","citations":[],"confidence":"low","answerFound":false}'])
     retrieval = StubRetrieval([RetrievedChunk(d.id, 0, "Policy", None, "abc", 0.1)])
     c = Container(llm=llm, queue=queue,
-                  documents=LegacyDocumentService(repo, perms, None, queue),
+                  documents=perms,
                   permissions=perms,
                   summaries=SummaryService(perms, jobs, SummaryWorker(perms, jobs, PromptBuilder(), llm), queue),
                   chat=ChatStreamService(retrieval, PromptBuilder(), llm),

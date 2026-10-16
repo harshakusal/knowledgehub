@@ -7,7 +7,7 @@ from app.config import Settings
 from app.models import Document, TextChunk
 from app.repositories.memory import InMemoryChunkRepository, InMemoryDocumentRepository, cosine_distance
 from app.services.chunking_service import ChunkingService
-from app.services.document_permission_service import DocumentPermissionService
+from app.services.legacy_document_service import LegacyDocumentService
 from app.services.ingestion_service import IngestionService
 from app.services.retrieval_service import RetrievalService
 from tests.fakes import FakeLlm
@@ -90,7 +90,7 @@ async def test_end_to_end_ingest_and_retrieve_in_memory():
     llm = FakeLlm()
     ing = IngestionService(docs, chunks, ChunkingService(), llm)
     assert await ing.ingest(a.id) == "READY" and await ing.ingest(b.id) == "READY"
-    r = RetrievalService(llm, chunks, DocumentPermissionService(docs), 5)
+    r = RetrievalService(llm, chunks, LegacyDocumentService(docs, None, None), 5)
     assert {c.document_id for c in await r.retrieve("alice", "q", [])} == {a.id}
 
 
